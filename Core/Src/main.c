@@ -1,13 +1,20 @@
 #include "main.h"
-
+/*
+HCLK            100mhz
+CST             100mhz
+APB1 per        25mhz
+APB1 clock      50mhz
+APB2 per        50mhz
+APB2 clock      100mhz
+*/
 void SystemClock_Config(void);
 
 int main(void) {
   SystemClock_Config();
 
   while (1) {
-  }
 
+  }
 }
 
 /**
