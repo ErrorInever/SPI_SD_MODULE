@@ -1,4 +1,6 @@
 #include "main.h"
+#include "sd_spi.h"
+#include "uart.h"
 /*
 HCLK            100mhz
 CST             100mhz
@@ -11,6 +13,9 @@ void SystemClock_Config(void);
 
 int main(void) {
   SystemClock_Config();
+  USART2_init();
+  SPI_init();
+  SD_init();
 
   while (1) {
 

@@ -46,6 +46,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/main.c
     Core/Src/sd_spi.c
+    Core/Src/ringbuffer.c
+    Core/Src/uart.c
 )
 
 # Add include paths
