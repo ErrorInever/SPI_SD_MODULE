@@ -1,6 +1,9 @@
 #include "main.h"
+#include "cmsis_gcc.h"
 #include "sd_spi.h"
+#include "stm32f4xx_hal.h"
 #include "uart.h"
+#include <stdint.h>
 /*
 HCLK            100mhz
 CST             100mhz
@@ -17,8 +20,41 @@ int main(void) {
   SPI_init();
   SD_init();
 
-  while (1) {
+  uint32_t sector_number = 18394; // № sector
 
+  uint8_t write_buffer[512];
+
+  for(uint16_t i = 0; i < 512; i++) {
+    write_buffer[i] = 0xDD;
+  }
+  uint8_t sector_write_res = SD_WriteSector(sector_number, write_buffer);
+  HAL_Delay(10);
+
+  if(sector_write_res == 0) {
+    UART_Printf("Write Sector: SUCCESS!\r\n");
+  }
+  if(sector_write_res == 5) {
+    UART_Printf("Write Sector: TIMEOUT!\r\n");
+  }
+  if(sector_write_res == 2) {
+    UART_Printf("Write Sector: ERROR!\r\n");
+  }
+  if(sector_write_res == 3) {
+    UART_Printf("Write Sector: REJECTED BY CARD!\r\n");
+  }
+
+  uint8_t buffer[512];
+  uint8_t sector_res = SD_ReadSector(sector_number, buffer);
+
+  if (sector_res == 0) {
+      UART_Printf("Read Sector %d: SUCCESS!\r\n", sector_number);
+      UART_Printf("Random data: %X\r\n", buffer[100]);
+  } else {
+      UART_Printf("Read FAILED with error code: %d\r\n", sector_res);
+  }
+
+  while (1) {
+    __NOP();
   }
 }
 

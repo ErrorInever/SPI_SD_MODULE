@@ -53,6 +53,9 @@ bool SPI_init(void);
 bool SD_init(void);
 static uint8_t SPI_transfer_data(uint8_t data);
 static uint8_t SPI_send_cmd(uint8_t cmd, uint32_t arg, uint8_t crc);
+static inline void SD_delay(void);
+
 uint8_t SD_ReadSector(uint32_t sector, uint8_t *buffer);
+uint8_t SD_WriteSector(uint32_t sector, uint8_t *buffer);
 
 #endif

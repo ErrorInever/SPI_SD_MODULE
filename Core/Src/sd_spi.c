@@ -81,6 +81,7 @@ static uint8_t SPI_send_cmd(uint8_t cmd, uint32_t arg, uint8_t crc) {
     SPI_transfer_data((uint8_t)arg);
     // Send CRC + stop (6 byte)
     SPI_transfer_data(crc | 0x01);
+    SD_delay();
     // Wait response from SD
     uint8_t timeout = 100;
     uint8_t res = 0;
@@ -91,14 +92,39 @@ static uint8_t SPI_send_cmd(uint8_t cmd, uint32_t arg, uint8_t crc) {
     return res;
 }
 
-static void SD_start_session(void) {
+static inline void SD_delay(void) {
+    SPI_transfer_data(SD_DUMMY_BYTE);
+}
+
+static inline void SD_start_session(void) {
     CS.port->BSRR = CS_LOW;
 }
 
 static void SD_stop_session(void) {
     while (SPI1->SR & SPI_SR_BSY);
     CS.port->BSRR = CS_HIGH;
-    SPI_transfer_data(0xFF); // delay()
+    SD_delay(); // delay()
+}
+
+// static uint8_t SD_wait_ready(void) {
+//     uint32_t timeout = 500000UL;
+//     while (SPI_transfer_data(0xFF) != 0xFF && --timeout > 0);
+//     return (timeout > 0) ? 0 : 1; // 0 - ready, 1 - timeout
+// }
+
+static uint8_t SD_wait_ready(void) {
+    uint32_t timeout = 1000000UL; // Увеличим для 64Гб
+    uint8_t last_byte = 0;
+    
+    while (timeout > 0) {
+        last_byte = SPI_transfer_data(0xFF);
+        if (last_byte == 0xFF) return 0; // Успех! Карта готова
+        timeout--;
+    }
+    
+    // Если дошли сюда — беда.
+    UART_Printf("WaitReady Timeout! Last byte: 0x%02X\r\n", last_byte);
+    return 1;
 }
 
 bool SD_init(void) {
@@ -164,8 +190,16 @@ bool SD_init(void) {
     // 6. If successful, switch SPI to high speed (divider 2)
     
     // SPI1->CR1 &= ~(0x7 << SPI_CR1_BR_Pos); 25Mhz
-    SPI1->CR1 &= ~(0x7 << SPI_CR1_BR_Pos); 
-    SPI1->CR1 |= (0x3 << SPI_CR1_BR_Pos); // 3.125Mhz
+
+    // SPI1->CR1 &= ~(0x7 << SPI_CR1_BR_Pos); 
+    // SPI1->CR1 |= (0x3 << SPI_CR1_BR_Pos); // 3.125Mhz
+
+    SPI1->CR1 &= ~SPI_CR1_SPE;
+
+    SPI1->CR1 &= ~(0x7 << SPI_CR1_BR_Pos);
+    SPI1->CR1 |= (0x4 << SPI_CR1_BR_Pos); // 1.5 Mhz
+
+    SPI1->CR1 |= SPI_CR1_SPE;
 
     return 0;
 }
@@ -173,17 +207,104 @@ bool SD_init(void) {
 // --- Уровень 4: Работа с данными ---
 
 uint8_t SD_ReadSector(uint32_t sector, uint8_t *buffer) {
-    // 1. Отправить CMD17. Аргумент = номер сектора.
-    // Помни: для SDXC (твоя 64Гб) адрес — это номер блока (0, 1, 2...), 
-    // а не адрес байта.
+    // 1. Send CMD17. Argument = sector number.
+    // For SDXC (your 64GB) the address is the block number (0, 1, 2...)
+    uint8_t res;
+    SD_start_session();
+    if (SD_wait_ready() != 0) { // wait SD wakeup
+        SD_stop_session();
+        return 5; 
+    }
+
+    res = SPI_send_cmd(SD_CMD17_READ_SINGLE_BLOCK, sector, SD_DUMMY_CRC);
+    UART_Printf("CMD17 res: 0x%02X\r\n", res);
+    if(res != SD_R1_READY_STATE) {
+        SD_stop_session();
+        return 1; // error
+    }
+    SD_delay();
+    // 2. Wait for the "Start Block Token" (0xFE) from the SD
+    uint32_t timeout = 100000UL;
+    uint8_t token;
+    do {
+        token = SPI_transfer_data(SD_DUMMY_BYTE);
+    } while(token == 0xFF && --timeout > 0);
+
+    if(token != SD_TOKEN_START_BLOCK) {
+        UART_Printf("Read_sector: 0xFE not received. token = %X\r\n", token);
+        SD_stop_session();
+        return 2; // error: token not received
+
+    }
+
+    // 3. Read 512 bytes into buffer
+    for(uint16_t i = 0; i < 512; i++) {
+        buffer[i] = SPI_transfer_data(SD_DUMMY_BYTE);
+    }
     
-    // 2. Ждать "Start Block Token" (0xFE) от карты
-    
-    // 3. Прочитать 512 байт в буфер
-    
-    // 4. Прочитать (пропустить) 2 байта CRC
-    
-    // 5. Поднять CS
+    // 4. Read (skip) 2 bytes of CRC
+    SPI_transfer_data(SD_DUMMY_BYTE); 
+    SPI_transfer_data(SD_DUMMY_BYTE);
+
+    SD_stop_session();
     
     return 0;
+}
+
+uint8_t SD_WriteSector(uint32_t sector, uint8_t *buffer) {
+    if(sector < 2000) {
+        UART_Printf("Danger: a sector closer to zero can erase the partition table(MBR)\r\n");
+        return 1;
+    }
+    CS.port->BSRR = CS_HIGH;
+    for(int i=0; i<10; i++) SPI_transfer_data(0xFF);
+
+    SD_start_session();
+    (void)SPI1->DR;
+
+    if (SD_wait_ready() != 0) {
+        UART_Printf("Still Busy. Sending CMD13...\r\n");
+        SPI_send_cmd(SD_CMD13_SEND_STATUS, 0, 0xFF);
+        SPI_transfer_data(0xFF);
+        SPI_transfer_data(0xFF);
+        
+        if (SD_wait_ready() != 0) {
+            SD_stop_session();
+            return 5; 
+        }
+    }
+    // 1. Send CMD24. Argument = sector number.
+    // For SDXC (your 64GB) the address is the block number (0, 1, 2...)
+    uint8_t res = SPI_send_cmd(SD_CMD24_WRITE_BLOCK, sector, SD_DUMMY_CRC);
+    if(res != SD_R1_READY_STATE) {
+        SD_stop_session();
+        return 2; // error
+    }
+    SD_delay();
+
+    // 2. Send token start block (0xFE)
+    SPI_transfer_data(SD_TOKEN_START_BLOCK);
+    for(uint16_t i = 0; i < 512; i++) {
+        SPI_transfer_data(buffer[i]);
+    }
+    SPI_transfer_data(SD_DUMMY_BYTE); 
+    SPI_transfer_data(SD_DUMMY_BYTE);
+
+    // Receive a response from the card to the sent block
+    uint8_t data_res = SPI_transfer_data(SD_DUMMY_BYTE);
+    // Mask 0x1F: The response must be xxxx0101 (0x05) - "Data accepted"
+    if ((data_res & 0x1F) != 0x05) {
+        SD_stop_session();
+        return 3; // Write error (rejected by card)
+    }
+
+    // 2. Waiting for writing to complete (Busy state)
+    // While the card is writing data from the buffer to flash memory, it sets MISO to zero.
+    // Send 0xFF and wait until NOT zero returns.
+    uint32_t timeout = 1000000UL; 
+    while (SPI_transfer_data(0xFF) != 0xFF && --timeout > 0);
+
+    SD_stop_session();
+
+    return (timeout == 0) ? 4 : 0;
 }
