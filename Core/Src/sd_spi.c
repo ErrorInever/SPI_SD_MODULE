@@ -106,23 +106,16 @@ static void SD_stop_session(void) {
     SD_delay(); // delay()
 }
 
-// static uint8_t SD_wait_ready(void) {
-//     uint32_t timeout = 500000UL;
-//     while (SPI_transfer_data(0xFF) != 0xFF && --timeout > 0);
-//     return (timeout > 0) ? 0 : 1; // 0 - ready, 1 - timeout
-// }
-
 static uint8_t SD_wait_ready(void) {
-    uint32_t timeout = 1000000UL; // Увеличим для 64Гб
+    uint32_t timeout = 1000000UL;
     uint8_t last_byte = 0;
     
     while (timeout > 0) {
         last_byte = SPI_transfer_data(0xFF);
-        if (last_byte == 0xFF) return 0; // Успех! Карта готова
+        if (last_byte == 0xFF) return 0;
         timeout--;
     }
     
-    // Если дошли сюда — беда.
     UART_Printf("WaitReady Timeout! Last byte: 0x%02X\r\n", last_byte);
     return 1;
 }
@@ -178,7 +171,7 @@ bool SD_init(void) {
         uint8_t ocr[4];
         for(int i=0; i<4; i++) ocr[i] = SPI_transfer_data(0xFF);
         
-        // 30-й бит первого байта (OCR[0]) показывает тип карты
+        // The 30th bit of the first byte (OCR[0]) indicates the card type
         if (ocr[0] & 0x40) {
             UART_Printf("Card Type: SDHC/SDXC (Block addressing)\r\n");
         } else {
@@ -203,8 +196,6 @@ bool SD_init(void) {
 
     return 0;
 }
-
-// --- Уровень 4: Работа с данными ---
 
 uint8_t SD_ReadSector(uint32_t sector, uint8_t *buffer) {
     // 1. Send CMD17. Argument = sector number.
